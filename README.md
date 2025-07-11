@@ -1,2 +1,6 @@
 # ClickUtils
-Misc Macros, Autoclicking and more
+
+Misc Macros, Autoclicking And More
+
+
+Fully Independent EXE File Coming Soon
