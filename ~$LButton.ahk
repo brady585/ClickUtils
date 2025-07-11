@@ -1,0 +1,251 @@
+#Requires AutoHotkey v2.0
+#SingleInstance Force
+
+; === Globals ===
+clicking := false
+autoclickerEnabled := false
+startTime := 0
+clickMode := "Left"
+clickTimers := Map("LButton", 0, "RButton", 0)
+checkColor := false
+watchColor := 0xFF0000
+scanRegion := [0, 0, A_ScreenWidth, A_ScreenHeight]
+colorVariation := 30
+
+leftMinCPS := 20
+leftMaxCPS := 30
+rightMinCPS := 10
+rightMaxCPS := 15
+
+; === GUI Setup ===
+myGui := Gui()
+mainTabs := myGui.AddTab2("w320", ["AutoClicker", "Color Finder"])
+mainTabs.OnEvent("Change", OnMainTabChanged)
+
+; === AutoClicker Tab ===
+mainTabs.UseTab("AutoClicker")
+
+myGui.AddText(, "AutoClicker Controls:")
+myGui.AddText(, "F8 - Toggle autoclicker on/off")
+myGui.AddText(, "Hold LButton/RButton to start clicking")
+toggleBtn := myGui.AddButton("w200", "Toggle Autoclicker (F8)")
+toggleBtn.OnEvent("Click", ToggleClicker)
+statusText := myGui.AddText(, "Status: OFF")
+
+myGui.AddText(, "Click Mode:")
+clickModeDropdown := myGui.AddDropDownList("w200", ["Left", "Right", "Both"])
+clickModeDropdown.Value := 1
+clickModeDropdown.OnEvent("Change", ClickModeChanged)
+
+myGui.AddText(, "CPS Settings:")
+
+; === CPS Tabs (only visible in AutoClicker tab) ===
+cpsTabs := myGui.AddTab2("w280", ["Left Click CPS", "Right Click CPS"])
+
+cpsTabs.UseTab("Left Click CPS")
+leftMinLabel := myGui.AddText(, "Min CPS: " leftMinCPS)
+leftMinSlider := myGui.AddSlider("w240 Range1-50 ToolTip", leftMinCPS)
+leftMinSlider.OnEvent("Change", UpdateCPS)
+
+leftMaxLabel := myGui.AddText(, "Max CPS: " leftMaxCPS)
+leftMaxSlider := myGui.AddSlider("w240 Range1-50 ToolTip", leftMaxCPS)
+leftMaxSlider.OnEvent("Change", UpdateCPS)
+
+cpsTabs.UseTab("Right Click CPS")
+rightMinLabel := myGui.AddText(, "Min CPS: " rightMinCPS)
+rightMinSlider := myGui.AddSlider("w240 Range1-50 ToolTip", rightMinCPS)
+rightMinSlider.OnEvent("Change", UpdateCPS)
+
+rightMaxLabel := myGui.AddText(, "Max CPS: " rightMaxCPS)
+rightMaxSlider := myGui.AddSlider("w240 Range1-50 ToolTip", rightMaxCPS)
+rightMaxSlider.OnEvent("Change", UpdateCPS)
+
+cpsTabs.UseTab()
+
+; === Color Finder Tab ===
+mainTabs.UseTab("Color Finder")
+
+myGui.AddText(, "Color Finder Settings:")
+myGui.AddText(, "Target Color (hex):")
+hexInput := myGui.AddEdit("w100", Format("0x{:06X}", watchColor))
+hexInput.OnEvent("Change", (ctrl, *) => OnHexInputChange(ctrl))
+
+myGui.AddText(, "F9 - Toggle color scanner")
+scannerStatusText := myGui.AddText(, "Scanner: OFF")
+
+myGui.AddText(, "Variation (tolerance):")
+variationSlider := myGui.AddSlider("w240 Range0-100 ToolTip", colorVariation)
+variationSlider.OnEvent("Change", (ctrl, *) => UpdateColorVariation(ctrl))
+
+colorPreview := myGui.AddText("w50 h25")
+colorPreview.BackgroundColor := watchColor
+colorPreview.BorderStyle := "Sunken"
+
+UpdateColorPreview()
+
+myGui.OnEvent("Close", (*) => ExitApp())
+myGui.Show()
+
+; === Hotkeys ===
+Hotkey("F8", ToggleClicker)
+Hotkey("F9", ToggleColorScanner)
+~*LButton::HandleButtonHold("LButton")
+~*RButton::HandleButtonHold("RButton")
+
+; === Functions ===
+
+OnMainTabChanged(ctrl, *) {
+    isAutoTab := ctrl.Text = "AutoClicker"
+    cpsTabs.Visible := isAutoTab
+    leftMinLabel.Visible := isAutoTab
+    leftMinSlider.Visible := isAutoTab
+    leftMaxLabel.Visible := isAutoTab
+    leftMaxSlider.Visible := isAutoTab
+    rightMinLabel.Visible := isAutoTab
+    rightMinSlider.Visible := isAutoTab
+    rightMaxLabel.Visible := isAutoTab
+    rightMaxSlider.Visible := isAutoTab
+}
+
+ToggleClicker(*) {
+    static lastToggle := 0
+    if (A_TickCount - lastToggle < 300)
+        return
+    lastToggle := A_TickCount
+
+    global autoclickerEnabled, statusText
+    autoclickerEnabled := !autoclickerEnabled
+    statusText.Value := "Status: " (autoclickerEnabled ? "ON" : "OFF")
+}
+
+ToggleColorScanner(*) {
+    global checkColor, scannerStatusText
+    checkColor := !checkColor
+    if checkColor {
+        SetTimer(WatchColorOnScreen, 100)
+        scannerStatusText.Value := "Scanner: ON"
+    } else {
+        SetTimer(WatchColorOnScreen, 0)
+        scannerStatusText.Value := "Scanner: OFF"
+    }
+}
+
+ClickModeChanged(ctrl, *) {
+    global clickMode
+    clickMode := ctrl.Text
+}
+
+UpdateCPS(*) {
+    global leftMinSlider, leftMaxSlider, rightMinSlider, rightMaxSlider
+    global leftMinCPS, leftMaxCPS, rightMinCPS, rightMaxCPS
+    global leftMinLabel, leftMaxLabel, rightMinLabel, rightMaxLabel
+
+    leftMinCPS := leftMinSlider.Value
+    leftMaxCPS := leftMaxSlider.Value
+    if leftMinCPS > leftMaxCPS {
+        leftMaxCPS := leftMinCPS
+        leftMaxSlider.Value := leftMaxCPS
+    }
+    leftMinLabel.Value := "Min CPS: " leftMinCPS
+    leftMaxLabel.Value := "Max CPS: " leftMaxCPS
+
+    rightMinCPS := rightMinSlider.Value
+    rightMaxCPS := rightMaxSlider.Value
+    if rightMinCPS > rightMaxCPS {
+        rightMaxCPS := rightMinCPS
+        rightMaxSlider.Value := rightMaxCPS
+    }
+    rightMinLabel.Value := "Min CPS: " rightMinCPS
+    rightMaxLabel.Value := "Max CPS: " rightMaxCPS
+}
+
+UpdateColorVariation(ctrl, *) {
+    global colorVariation
+    colorVariation := ctrl.Value
+}
+
+HandleButtonHold(button) {
+    global autoclickerEnabled, clicking, startTime, clickMode, clickTimers
+
+    if !autoclickerEnabled || clicking
+        return
+
+    if (
+        (clickMode = "Left" && button != "LButton") ||
+        (clickMode = "Right" && button != "RButton") ||
+        (clickMode = "Both" && GetKeyState(OtherButton(button), "P"))
+    )
+        return
+
+    startTime := A_TickCount
+
+    if clickTimers[button]
+        SetTimer(clickTimers[button], 0)
+
+    clickTimers[button] := () => CheckHold(button)
+    SetTimer(clickTimers[button], 10)
+}
+
+CheckHold(button) {
+    global autoclickerEnabled, clicking, startTime, clickMode
+    global leftMinCPS, leftMaxCPS, rightMinCPS, rightMaxCPS, clickTimers
+
+    if !autoclickerEnabled || !GetKeyState(button, "P") {
+        SetTimer(clickTimers[button], 0)
+        clicking := false
+        return
+    }
+
+    if (A_TickCount - startTime >= 500) {
+        SetTimer(clickTimers[button], 0)
+        clicking := true
+
+        while autoclickerEnabled && GetKeyState(button, "P") {
+            cps := (button = "LButton") ? Random(leftMinCPS, leftMaxCPS) : Random(rightMinCPS, rightMaxCPS)
+            delay := 1000 / cps
+
+            if (clickMode = "Left" && button = "LButton")
+                Click("left")
+            else if (clickMode = "Right" && button = "RButton")
+                Click("right")
+            else if (clickMode = "Both")
+                Click(button = "LButton" ? "left" : "right")
+
+            Sleep(Random(delay * 0.9, delay * 1.1))
+        }
+
+        clicking := false
+    }
+}
+
+WatchColorOnScreen() {
+    global watchColor, scanRegion, colorVariation
+    x1 := scanRegion[1], y1 := scanRegion[2], x2 := scanRegion[3], y2 := scanRegion[4]
+    try {
+        PixelSearch(&px, &py, x1, y1, x2, y2, watchColor, colorVariation)
+        MouseMove(px, py, 0)
+        Sleep(50)
+        Send("q")
+    } catch {
+        ; Do nothing if not found
+    }
+}
+
+OnHexInputChange(ctrl, *) {
+    global watchColor
+    val := ctrl.Value.Trim()
+    if RegExMatch(val, "i)^(0x)?[0-9a-f]{6}$") {
+        str := val.Replace("0x", "")
+        watchColor := "0x" . str
+        UpdateColorPreview()
+    }
+}
+
+UpdateColorPreview() {
+    global colorPreview, watchColor
+    colorPreview.BackgroundColor := watchColor
+}
+
+OtherButton(btn) {
+    return btn = "LButton" ? "RButton" : "LButton"
+}
